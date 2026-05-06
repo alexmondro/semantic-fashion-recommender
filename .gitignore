@@ -1,0 +1,30 @@
+.DS_Store
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python cache/test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node/build output if a static UI is added later
+node_modules/
+dist/
+build/
+
+# Large raw source data; keep out of git unless explicitly needed.
+meta_Amazon_Fashion.jsonl.gz
+data/raw/
+data/interim/
+
+# Generated archives/submission bundles
+*.zip
