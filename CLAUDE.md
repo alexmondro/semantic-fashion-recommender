@@ -46,11 +46,13 @@ Five-business-day take-home assignment for an OpenAI role. Build a semantic reco
 |---|---|---|
 | Service shape | FastAPI + Uvicorn | Matches "microservice" framing; auto-generated `/docs` Swagger UI is the built-in interactive demo |
 | Embedding model | `text-embedding-3-small` (1536 dim) | ~$0.02/M tokens, strong quality for short product text |
-| Chat model | `gpt-5-mini` | Mini tier handles structured JSON parsing and short explanations cheaply and quickly |
-| Structured outputs | Verified 2026-05-06: `gpt-5-mini` supports Structured Outputs on the Responses and Chat Completions APIs. Prefer the current Python SDK's parsed structured-output helper with a Pydantic intent model; fallback to manual `json_schema` response format; if account/model access blocks `gpt-5-mini`, use `gpt-4o-mini` with the same schema. | Avoids regex on free-text LLM responses; fallback preserves schema adherence without changing architecture |
+| Chat model | **Locked: `gpt-5-mini`** | Verified 2026-05-06 against official OpenAI docs. Mini tier handles structured JSON parsing and short explanations cheaply and quickly |
+| Structured outputs | **Locked: use `gpt-5-mini` Structured Outputs** on the Responses API. Prefer the current Python SDK's parsed structured-output helper with a Pydantic intent model; fallback to manual `json_schema` response format only if SDK helper friction appears. If account/model access blocks `gpt-5-mini`, use `gpt-4o-mini` with the same schema as an emergency fallback. | Avoids regex on free-text LLM responses; fallback preserves schema adherence without changing architecture |
 | Vector index | Local (start with NumPy cosine; switch to FAISS only if subset size demands it) | Ships in the zip; no external infra; trivially in-memory at ~25K × 1536 |
 | Dataset subset | **Hypothesis:** filter to non-empty `features` + `rating_number ≥ 5–10`, sample to ~25K. **Confirm via EDA before locking.** | Recruiter said full dataset unnecessary; smaller subset = cheaper, faster, easier to ship |
 | LLM roles | (a) query → structured intent; (b) per-result one-line explanation | Highest leverage for the "customer acumen" signal |
+
+**Model verification note:** Task 2 is closed. Do not reopen model selection unless `gpt-5-mini` access fails during implementation. The implementation target is `gpt-5-mini` for both structured intent parsing and short per-result explanations, with `text-embedding-3-small` for embeddings.
 
 ---
 
