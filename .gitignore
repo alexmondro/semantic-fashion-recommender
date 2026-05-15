@@ -16,6 +16,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Local assistant/editor workspace state
+.claude/
+
 # Node/build output if a static UI is added later
 node_modules/
 dist/
