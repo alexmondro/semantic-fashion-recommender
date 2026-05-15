@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from app.explainer import ProductExplainer
+from app.llm_client import LlmClientError
 from app.schemas import ExplainedProduct, ProductIntent, ProductRecord, RankedProduct
 
 
 class FakeLlmClient:
-    """Capture explanation prompts while returning canned text responses."""
+    """Capture explanation prompts while returning canned structured responses."""
 
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[Any]) -> None:
         self.responses = responses
         self.calls: list[dict[str, str]] = []
 
@@ -24,11 +26,14 @@ class FakeLlmClient:
         user_prompt: str,
         response_model: type[BaseModel],
     ) -> BaseModel:
-        raise AssertionError("explanation should not request structured parsing")
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt})
+        response = self.responses.pop(0)
+        if isinstance(response, BaseModel):
+            return response
+        return response_model.model_validate(response)
 
     def complete_text(self, *, system_prompt: str, user_prompt: str) -> str:
-        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt})
-        return self.responses.pop(0)
+        raise AssertionError("batch explanation should not request free-text completion")
 
 
 def intent(**updates: Any) -> ProductIntent:
@@ -84,7 +89,16 @@ def test_explain_preserves_ranked_products_and_normalizes_explanation_text() -> 
 
     first_product = product(parent_asin="B000FIRST", title="First Sandal")
     second_product = product(parent_asin="B000SECOND", title="Second Sandal")
-    fake_client = FakeLlmClient(["  Matches the beach need.\n", "Works for casual summer walking."])
+    fake_client = FakeLlmClient(
+        [
+            {
+                "explanations": [
+                    {"rank": 1, "why_this_matches": "  Matches the beach need.\n"},
+                    {"rank": 2, "why_this_matches": "Works for casual summer walking."},
+                ]
+            }
+        ]
+    )
     explainer = ProductExplainer(fake_client)
 
     explained = explainer.explain(
@@ -103,7 +117,7 @@ def test_explain_preserves_ranked_products_and_normalizes_explanation_text() -> 
         "Works for casual summer walking.",
     ]
     assert all(isinstance(item, ExplainedProduct) for item in explained)
-    assert len(fake_client.calls) == 2
+    assert len(fake_client.calls) == 1
 
 
 def test_prompt_includes_public_intent_fields_and_omits_retrieval_text() -> None:
@@ -117,7 +131,9 @@ def test_prompt_includes_public_intent_fields_and_omits_retrieval_text() -> None
         audience="women",
         price_preference="under $50",
     )
-    fake_client = FakeLlmClient(["Good match."])
+    fake_client = FakeLlmClient(
+        [{"explanations": [{"rank": 1, "why_this_matches": "Good match."}]}]
+    )
     explainer = ProductExplainer(fake_client)
 
     explainer.explain(shopper_intent, [ranked(product())])
@@ -138,7 +154,9 @@ def test_prompt_uses_product_facts_and_omits_missing_store_and_price() -> None:
     """Product facts should stay concrete and omit unavailable optional fields."""
 
     features = [f"Feature {number}" for number in range(1, 9)]
-    fake_client = FakeLlmClient(["Good match."])
+    fake_client = FakeLlmClient(
+        [{"explanations": [{"rank": 1, "why_this_matches": "Good match."}]}]
+    )
     explainer = ProductExplainer(fake_client)
 
     explainer.explain(
@@ -165,3 +183,15 @@ def test_prompt_uses_product_facts_and_omits_missing_store_and_price() -> None:
     assert "  - Feature 6" in prompt
     assert "Feature 7" not in prompt
     assert "Feature 8" not in prompt
+
+
+def test_explain_rejects_batch_that_does_not_match_product_ranks() -> None:
+    """Structured explanation output must align exactly with the ranked products."""
+
+    fake_client = FakeLlmClient(
+        [{"explanations": [{"rank": 99, "why_this_matches": "Wrong product."}]}]
+    )
+    explainer = ProductExplainer(fake_client)
+
+    with pytest.raises(LlmClientError, match="did not match product ranks"):
+        explainer.explain(intent(), [ranked(product())])
