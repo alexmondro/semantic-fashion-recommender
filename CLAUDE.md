@@ -152,6 +152,15 @@ This is the project's pseudo-Jira and the source of truth for what's left and wh
 
 Items 1 and 4 can run in parallel. Everything else is roughly sequential.
 
+### Git history / commit hygiene
+- Keep the working tree clean between finished board items whenever practical.
+- Make commits in project-board order. If one work session completes multiple board items, split the result into logical commits that map to those items instead of making one broad implementation commit.
+- Commit generated artifacts with the script or source change that produced them when the grader needs those artifacts out-of-the-box. Example: `data/products.jsonl` belongs with the filter script; `data/embeddings.npy` and `data/embedding_manifest.json` belong with the embedding script.
+- Keep local assistant/editor state, caches, virtualenvs, raw source data, and submission zips out of commits unless explicitly requested.
+- Before each commit, review `git status --short` and `git diff --cached --stat` to confirm the staged files match the intended scope.
+- Use concise imperative commit subjects that name the shipped behavior, not the tool that produced it.
+- Do not rewrite existing git history after commits have been created unless the user explicitly asks for a history rewrite.
+
 ### Pre-build (decisions / unknowns)
 - [x] 1. EDA on the 826K dataset — confirm filter hypothesis, lock corpus size
 - [x] 2. Verify `gpt-5-mini` supports structured outputs in the current SDK; pick a fallback if not
