@@ -48,8 +48,8 @@ Five-business-day take-home assignment for an OpenAI role. Build a semantic reco
 | Embedding model | `text-embedding-3-small` (1536 dim) | ~$0.02/M tokens, strong quality for short product text |
 | Chat model | **Locked: `gpt-5-mini`** | Verified 2026-05-06 against official OpenAI docs. Mini tier handles structured JSON parsing and short explanations cheaply and quickly |
 | Structured outputs | **Locked: use `gpt-5-mini` Structured Outputs** on the Responses API. Prefer the current Python SDK's parsed structured-output helper with a Pydantic intent model; fallback to manual `json_schema` response format only if SDK helper friction appears. If account/model access blocks `gpt-5-mini`, use `gpt-4o-mini` with the same schema as an emergency fallback. | Avoids regex on free-text LLM responses; fallback preserves schema adherence without changing architecture |
-| Vector index | Local (start with NumPy cosine; switch to FAISS only if subset size demands it) | Ships in the zip; no external infra; trivially in-memory at ~25K × 1536 |
-| Dataset subset | **Hypothesis:** filter to non-empty `features` + `rating_number ≥ 5–10`, sample to ~25K. **Confirm via EDA before locking.** | Recruiter said full dataset unnecessary; smaller subset = cheaper, faster, easier to ship |
+| Vector index | **Locked: local NumPy cosine search** | Ships in the zip; no external infra; EDA confirms 77,740 × 1536 `float32` embeddings (~456 MiB) are acceptable in memory |
+| Dataset subset | **Locked: ship the full eligible pool of 77,740 products with `title`, non-empty `images`, non-empty `features`, `rating_number >= 10`, and `average_rating >= 4.0`. No downsampling.** | The eligible pool fits in memory (~480 MiB combined) and ships in the zip without trouble. Keeping all 77,740 products gives better category breadth for stretch outfit composition and removes the need to defend a sampling strategy |
 | LLM roles | (a) query → structured intent; (b) per-result one-line explanation | Highest leverage for the "customer acumen" signal |
 
 **Model verification note:** Task 2 is closed. Do not reopen model selection unless `gpt-5-mini` access fails during implementation. The implementation target is `gpt-5-mini` for both structured intent parsing and short per-result explanations, with `text-embedding-3-small` for embeddings.
@@ -89,8 +89,8 @@ The README's "Design decisions & trade-offs" section is the artifact that proves
 ```
 Raw JSONL (826K products)
    │
-   ▼  offline, one-time: filter + sample
-Curated subset (~25K, JSON)
+   ▼  offline, one-time: filter
+Eligible subset (77,740, JSON)
    │
    ▼  offline: embed via text-embedding-3-small
 Embeddings + metadata  ──► shipped in the zip
@@ -122,7 +122,7 @@ Runtime per query:
 ## Hard constraints
 - Single zip submission via Ashby
 - Grader runs: `pip install -r requirements.txt` → set `OPENAI_API_KEY` in `.env` → `uvicorn app.main:app` (or equivalent). No other steps.
-- Pre-computed embeddings ship in the repo so first run does not require embedding 25K products
+- Pre-computed embeddings ship in the repo so first run does not require embedding 77,740 products
 - Stay well within the $30 OpenAI credit (real cost should be < $5 across all dev)
 - 5 business days from email receipt (received 2026-05-05)
 
@@ -153,21 +153,21 @@ This is the project's pseudo-Jira and the source of truth for what's left and wh
 Items 1 and 4 can run in parallel. Everything else is roughly sequential.
 
 ### Pre-build (decisions / unknowns)
-- [ ] 1. EDA on the 826K dataset — confirm filter hypothesis, pick actual sample size
+- [x] 1. EDA on the 826K dataset — confirm filter hypothesis, lock corpus size
 - [x] 2. Verify `gpt-5-mini` supports structured outputs in the current SDK; pick a fallback if not
-- [ ] 3. Lock directory structure (including thin interfaces for embedder, vector index, LLM client — modularity hinge)
-- [ ] 4. Lock API contract (request, response, error schemas)
-- [ ] 5. NumPy vs. FAISS — falls out of EDA result
+- [x] 3. Lock directory structure (including thin interfaces for embedder, vector index, LLM client — modularity hinge)
+- [x] 4. Lock API contract (request, response, error schemas)
+- [x] 5. NumPy vs. FAISS — falls out of EDA result
 
 ### Build — data prep (offline scripts, run once)
-- [ ] 6. Filter + sample script → curated subset JSON
-- [ ] 7. Embedding script → run once, save artifacts shipped in the repo
+- [x] 6. Filter script → eligible subset JSON (no downsampling)
+- [x] 7. Embedding script → run once, save artifacts shipped in the repo
 
 ### Build — service
-- [ ] 8. Vector search module (load embeddings, cosine top-K, plus diversity / quality post-filtering for customer acumen)
-- [ ] 9. Query-parsing module (gpt-5-mini structured output → intent object)
-- [ ] 10. Explanation module (gpt-5-mini → one-line "why this matches")
-- [ ] 11. FastAPI app wiring it all together
+- [x] 8. Vector search module (load embeddings, cosine top-K, plus diversity / quality post-filtering for customer acumen)
+- [x] 9. Query-parsing module (gpt-5-mini structured output → intent object)
+- [x] 10. Explanation module (gpt-5-mini → one-line "why this matches")
+- [x] 11. FastAPI app wiring it all together
 - [ ] 12. One end-to-end smoke test
 
 ### Wrap
