@@ -177,7 +177,7 @@ Items 1 and 4 can run in parallel. Everything else is roughly sequential.
 - [x] 9. Query-parsing module (gpt-5-mini structured output → intent object)
 - [x] 10. Explanation module (gpt-5-mini → one-line "why this matches")
 - [x] 11. FastAPI app wiring it all together
-- [ ] 12. One end-to-end smoke test
+- [x] 12. One end-to-end smoke test
 
 ### Wrap
 - [ ] 13. Architecture diagram (PDF or JPEG)

@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import re
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import openai
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
-from app.config import Settings
+from app.config import Settings, load_settings
+from app.explainer import _ExplanationBatch, _ExplanationItem
 from app.llm_client import LlmClientError
 from app.main import app, create_app
 from app.pipeline import NoResultsError
+from app.query_parser import _ParsedProductIntent
 from app.schemas import ExplainedProduct, ProductIntent, ProductRecord, RecommendationRequest, RecommendationResponse
+from app.vector_index import NumpyVectorIndex
 
 
 def product() -> ProductRecord:
@@ -200,3 +206,141 @@ def test_openai_api_error_maps_to_typed_502() -> None:
 
     assert response.status_code == 502
     assert response.json()["error"] == "upstream_error"
+
+
+_RANK_PATTERN = re.compile(r"^Product rank (\d+):", re.MULTILINE)
+
+
+def _user_message_text(messages: list[dict[str, str]]) -> str:
+    for message in messages:
+        if message.get("role") == "user":
+            return message.get("content", "")
+    return ""
+
+
+class _StubOpenAIClient:
+    """Stub OpenAI SDK client wired into both the embedder and the LLM client.
+
+    Returns the first product's actual embedding so the cosine search produces a
+    deterministic top match, and synthesizes structured responses for each parse
+    target the pipeline expects.
+    """
+
+    def __init__(self, vector_index: NumpyVectorIndex) -> None:
+        self._query_vector = vector_index.embeddings[0].tolist()
+        self.embeddings_call_count = 0
+        self.responses_parse_call_count = 0
+        self.embeddings = _StubEmbeddings(self)
+        self.responses = _StubResponses(self)
+
+
+class _StubEmbeddings:
+    def __init__(self, parent: _StubOpenAIClient) -> None:
+        self._parent = parent
+
+    def create(self, *, model: str, input: Any, **kwargs: Any) -> SimpleNamespace:
+        self._parent.embeddings_call_count += 1
+        return SimpleNamespace(data=[SimpleNamespace(embedding=self._parent._query_vector)])
+
+
+class _StubResponses:
+    def __init__(self, parent: _StubOpenAIClient) -> None:
+        self._parent = parent
+
+    def parse(
+        self,
+        *,
+        model: str,
+        input: list[dict[str, str]],
+        text_format: type,
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        self._parent.responses_parse_call_count += 1
+        user_text = _user_message_text(input)
+
+        if text_format.__name__ == "_ParsedProductIntent":
+            shopper_query = user_text.removeprefix("Shopper query: ").strip()
+            parsed = _ParsedProductIntent(
+                original_query=shopper_query,
+                occasion=None,
+                season="summer",
+                garment_types=["dress"],
+                attributes=["beach", "lightweight"],
+                audience=None,
+                price_preference=None,
+                retrieval_text=shopper_query,
+            )
+            return SimpleNamespace(output_parsed=parsed)
+
+        if text_format.__name__ == "_ExplanationBatch":
+            ranks = [int(match.group(1)) for match in _RANK_PATTERN.finditer(user_text)]
+            batch = _ExplanationBatch(
+                explanations=[
+                    _ExplanationItem(
+                        rank=rank,
+                        why_this_matches=f"Fits the shopper intent at rank {rank}.",
+                    )
+                    for rank in ranks
+                ]
+            )
+            return SimpleNamespace(output_parsed=batch)
+
+        raise AssertionError(f"unexpected text_format passed to responses.parse: {text_format!r}")
+
+
+@pytest.fixture(scope="module")
+def real_vector_index() -> NumpyVectorIndex:
+    """Load the shipped 77,740-product index once per test module.
+
+    The shipped artifacts are a hard grader requirement — a missing file means a
+    broken zip, so this hard-fails rather than skipping.
+    """
+
+    settings = load_settings()
+    assert settings.product_metadata_path.exists(), (
+        f"shipped artifact missing: {settings.product_metadata_path}"
+    )
+    assert settings.embedding_matrix_path.exists(), (
+        f"shipped artifact missing: {settings.embedding_matrix_path}"
+    )
+    return NumpyVectorIndex.load(
+        metadata_path=settings.product_metadata_path,
+        embedding_matrix_path=settings.embedding_matrix_path,
+    )
+
+
+def test_end_to_end_recommendation_through_grader_startup_path(
+    real_vector_index: NumpyVectorIndex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the full grader-facing startup: create_app() -> lifespan -> _build_pipeline."""
+
+    stub = _StubOpenAIClient(real_vector_index)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("app.embedder.OpenAI", lambda **kwargs: stub)
+    monkeypatch.setattr("app.llm_client.OpenAI", lambda **kwargs: stub)
+    monkeypatch.setattr(main.NumpyVectorIndex, "load", lambda *args, **kwargs: real_vector_index)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/recommendations",
+            json={"query": "summer beach dress", "max_results": 3},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"] == "summer beach dress"
+    assert body["intent"]["retrieval_text"]
+    results = body["results"]
+    assert len(results) == 3
+    assert [result["rank"] for result in results] == [1, 2, 3]
+    scores = [result["score"] for result in results]
+    assert scores == sorted(scores, reverse=True)
+    settings = load_settings()
+    for result in results:
+        assert result["why_this_matches"]
+        assert result["product"]["average_rating"] >= settings.min_average_rating
+        assert result["product"]["rating_number"] >= settings.min_rating_count
+    assert results[0]["product"]["parent_asin"] == real_vector_index.products[0].parent_asin
+    assert stub.embeddings_call_count == 1
+    assert stub.responses_parse_call_count == 2
