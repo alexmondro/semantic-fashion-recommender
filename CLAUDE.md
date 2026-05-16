@@ -182,7 +182,7 @@ Items 1 and 4 can run in parallel. Everything else is roughly sequential.
 ### Wrap
 - [x] 13. Architecture diagram (PDF or JPEG)
 - [x] 14. README (install, curated sample queries + outputs, design trade-offs, what was cut and why, "next steps with more time")
-- [ ] 15. Out-of-the-box verification on a clean venv
+- [x] 15. Out-of-the-box verification on a clean venv
 - [ ] 16. Zip + submit via Ashby
 
 ### Stretch (only if 1–16 done with time left)
